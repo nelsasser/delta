@@ -2,4 +2,6 @@
 
 members = [
 	"delta-core",
+	"delta-node",
+	"delta-node-macro"
 ]
