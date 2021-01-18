@@ -2,7 +2,7 @@ extern crate proc_macro;
 use std::str::FromStr;
 use std::collections::HashMap;
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, quote_spanned};
 use syn::{Ident, ImplItem, ItemImpl, ItemStruct};
 use syn:: {parse::Nothing, parse::Parser, parse_macro_input};
 
@@ -93,12 +93,18 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
     };
 
     // generate code to call both init steps
-    let field_list: Vec<proc_macro2::TokenStream> = ast.fields.iter().map(|x| {
+    let field_list: Vec<proc_macro2::TokenStream> = ast.fields.iter().filter(|x| {
+        if let Some(name) = &x.ident {
+            return name.to_string() != "__num_fields" && name.to_string() != "__set_fields"
+        }
+        false
+    }).map(|x| {
         match &x.ident {
             Some(name) => quote!{ #name },
-            None => proc_macro2::TokenStream::new()
+            _ => proc_macro2::TokenStream::new()
         }
     }).collect();
+
     let default_init = default_initialize(&field_list, &name);
     
     let output_init = quote! {
@@ -110,10 +116,10 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
 
     // add an implementation for the required execution code
     let output_deltanode = quote! { 
-        impl DeltaNode<i32> for #name {
-            fn __execute(mut self) -> i32 {
+        impl DeltaNode<Option<i32>> for #name {
+            fn __execute(mut self) -> Option<i32> {
                 self.__pre_execute();
-                let res: i32 = self.__on_execute();
+                let res: Option<i32> = self.__on_execute();
                 self.__post_execute();
                 res
             }
@@ -165,6 +171,8 @@ pub fn delta_node_struct(_args: TokenStream, input: TokenStream) -> TokenStream 
 // if a method does exist it also checks / modifies it to make it correct (e.g. adding __num_fields and __set_fields fields to __initialize)
 #[proc_macro_attribute]
 pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
+    println!("Entering");
+
     let mut item_impl = parse_macro_input!(input as ItemImpl);
     let _ = parse_macro_input!(_args as Nothing);
 
@@ -181,6 +189,7 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
         }
     }
 
+    println!("Got all methods");
     // Next, need to go through the found methods and generate code accordingly
 
     // store all of the generated function here
@@ -233,6 +242,8 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
         }
     }
 
+    println!("Found existing methods");
+
     // now we need to get default functions for all of the non-existent required functions
     for (method, flag) in &method_flags {
         if !flag {
@@ -246,12 +257,17 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
         }
     }
 
+    println!("Generated functions");
+
     // can either push back into array, or if name can be figured out easily then that seems like a neater way of doing it, without modifying any written code
     // can't seem to easily get the name, but this is straightforward, but it does 'modify' the input code, which I don't like
     for md in generated_functions.iter() {
+        println!("{:#?}", md.clone().to_string());
         let q = syn::parse_quote!(#md);
         item_impl.items.push(q);
     }
+
+    println!("Packed 'em all together");
 
     let tokens = quote! {
         #item_impl
@@ -265,18 +281,24 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
     //         #(#generated_functions)*
     //     }
     // };
-
+    
+    println!("Done");
     tokens.into()
 }
 
 fn default_initialize(field_list: &Vec<proc_macro2::TokenStream>, name: &Ident, ) -> proc_macro2::TokenStream {
     // TODO: if using the default initialize the value should be the user specified default value if it exists
-    let tokens = quote! {
-        pub fn __default_initialize(&mut self) -> Box<#name> {
-            Box::new{#(#field_list: ..Default::default(), )* __num_fields: field_list.len(), __set_fields: 0}
-        }
-    };
-    tokens
+    if let Ok(num_fields) = proc_macro2::TokenStream::from_str(&field_list.len().to_string()) {
+        let tokens = quote! {
+            pub fn __default_initialize(&mut self) -> Box<#name> {
+                Box::new( #name { #(#field_list: Default::default(), )* __num_fields: #num_fields, __set_fields: 0})
+            }
+        };
+        tokens
+    } else {
+        proc_macro2::TokenStream::new()
+    }
+
 }
 
 fn default_custom_initialize() -> proc_macro2::TokenStream {
@@ -306,7 +328,7 @@ fn default_on_execute() -> proc_macro2::TokenStream {
 
 fn default_post_execute() -> proc_macro2::TokenStream {
     // default post execute resets all of registered fields 
-    generate_wrapper_s("__post_execute", "reset", None, true, true, true)
+    generate_wrapper_s("__post_execute", "__reset", None, true, true, true)
 }
 
 fn generate_wrapper(wrap_name: proc_macro2::TokenStream, func_name: proc_macro2::TokenStream, func_return: Option<proc_macro2::TokenStream>, public: bool, use_self: bool, call_func: bool) -> proc_macro2::TokenStream {
@@ -329,8 +351,8 @@ fn generate_wrapper(wrap_name: proc_macro2::TokenStream, func_name: proc_macro2:
         }
     };
 
-    // get tokens to make function call a call of `self.*` 
-    let ts_self_call = match proc_macro2::TokenStream::from_str(if use_self { "self." } else { "" }) {
+    // get tokens to make function call a call of `self.*`, only gets activated when using &mut self and calling a function (because it would be called with self.)
+    let ts_self_call = match proc_macro2::TokenStream::from_str(if use_self && call_func { "self." } else { "" }) {
         Ok(x) => x,
         Err(e) => {
             println!("Error generating wrapper when getting `self` tokens! {:?}", e);
@@ -385,8 +407,8 @@ fn generate_wrapper_s(wrap_name: &str, func_name: &str, func_return: Option<&str
         }
     };
 
-    // get tokens to make function call a call of `self.*` 
-    let ts_self_call = match proc_macro2::TokenStream::from_str(if use_self { "self." } else { "" }) {
+    // get tokens to make function call a call of `self.*`, only gets activated when using &mut self and calling a function (because it would be called with self.)
+    let ts_self_call = match proc_macro2::TokenStream::from_str(if use_self && call_func { "self." } else { "" }) {
         Ok(x) => x,
         Err(e) => {
             println!("Error generating wrapper when getting `self.` tokens! {:?}", e);
@@ -423,10 +445,14 @@ fn generate_wrapper_s(wrap_name: &str, func_name: &str, func_return: Option<&str
 
     // build the wrapping function
     let tokens = match func_return {
-        Some(ret) => quote! {
-            #ts_pub fn #ts_wrap_name(#ts_self_arg) #ret {
-                #ts_self_call #ts_func_name #ts_call
-            }
+        Some(ret) => if let Ok(rt) = proc_macro2::TokenStream::from_str(ret) {
+            quote! {
+                #ts_pub fn #ts_wrap_name(#ts_self_arg) -> #rt {
+                    #ts_self_call #ts_func_name #ts_call
+                }
+            }    
+        } else {
+            quote! { compile_error!("Invalid return type when generating wrapper") }
         },
         None => quote! {
             #ts_pub fn #ts_wrap_name(#ts_self_arg) {

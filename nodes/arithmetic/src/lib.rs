@@ -12,7 +12,6 @@ pub struct Addi32 {
     //
     // delta-default => {...}:   - Specify the default value of the field when reseting. 
     //                           - The data inside the `{}` will be taken as gospel, so it must be 100% syntactically correct.
-    
     x: i32,
     y: i32,
 }
@@ -45,10 +44,10 @@ impl Addi32 {
     //     // Box::new(Addi32 { x: 0, y: 0, __num_attributes: 2, __set_attributes: 0}) // what it will be generated
     // }
 
-    // fn __pre_execute(&mut self) {
-    //     // do nothing before execution
-    //     println!("Pre Execution!!!");
-    // }
+    fn __pre_execute(&mut self) {
+        // do nothing before execution
+        println!("Pre Execution!!!");
+    }
 
     // fn __on_execute(&mut self) -> i32 {
     //     println!("Execution");
