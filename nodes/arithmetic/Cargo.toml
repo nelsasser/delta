@@ -7,8 +7,8 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-delta-node = { path="../../core/delta-node" }
-delta-node-macro = { path="../../core/delta-node-macro" }
+delta-lib = { path="../../lib/delta-lib" }
+delta-lib-macro = { path="../../lib/delta-lib-macro" }
 
 [lib]
 dylib=true

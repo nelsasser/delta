@@ -1,5 +1,5 @@
-use delta_node_macro::{delta_node_struct, delta_node_impl, RegisterDeltaNode};
-use delta_node::DeltaNode;
+use delta_lib_macro::{delta_node_struct, delta_node_impl, RegisterDeltaNode};
+use delta_lib::DeltaNode;
 #[delta_node_struct]
 #[derive(RegisterDeltaNode)]
 pub struct Addi32 {
@@ -39,28 +39,28 @@ impl Addi32 {
     //  - Only modifying itself, so it returns nothing
     //
     // Then, after both intitialization functions have run, the Box from the default stage carrying the changes of the custom stage is returned.
-    pub fn __initialize() -> Box<Addi32> {
-        // create a new blank Addi32 node on the heap
-        Box::new(Addi32 { x: 0, y: 0, __num_attributes: 0, __set_attributes: 0}) // what it will look like (hopefully the error will go away because it will see that it expands correctly)
-        // Box::new(Addi32 { x: 0, y: 0, __num_attributes: 2, __set_attributes: 0}) // what it will be generated
-    }
+    // pub fn __initialize() -> Box<Addi32> {
+    //     // create a new blank Addi32 node on the heap
+    //     Box::new(Addi32 { x: 0, y: 0, __num_attributes: 0, __set_attributes: 0}) // what it will look like (hopefully the error will go away because it will see that it expands correctly)
+    //     // Box::new(Addi32 { x: 0, y: 0, __num_attributes: 2, __set_attributes: 0}) // what it will be generated
+    // }
 
-    fn __pre_execute(&mut self) {
-        // do nothing before execution
-        println!("Pre Execution!!!");
-    }
+    // fn __pre_execute(&mut self) {
+    //     // do nothing before execution
+    //     println!("Pre Execution!!!");
+    // }
 
-    fn __on_execute(&mut self) -> i32 {
-        println!("Execution");
-        self.x + self.y
-    }
+    // fn __on_execute(&mut self) -> i32 {
+    //     println!("Execution");
+    //     self.x + self.y
+    // }
 
-    fn __post_execute(&mut self) {
-        // reset both values after executing node
-        self.x = 0;
-        self.y = 0;
-        println!("Post Execution");
-    }
+    // fn __post_execute(&mut self) {
+    //     // reset both values after executing node
+    //     self.x = 0;
+    //     self.y = 0;
+    //     println!("Post Execution");
+    // }
 }
 
 #[cfg(test)]
@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn it_works() {
-        let mut adder: Box<Addi32> = Addi32::initialize();
+        let mut adder: Box<Addi32> = Addi32::__initialize();
         adder.__set_x(100);
         adder.__set_y(100);
         assert_eq!(200, adder.__execute());

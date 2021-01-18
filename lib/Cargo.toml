@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+	"delta-lib",
+	"delta-lib-macro",
+]

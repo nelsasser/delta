@@ -8,4 +8,4 @@ edition = "2018"
 
 [dependencies]
 arithmetic = { path = "../../nodes/arithmetic" }
-delta-node = { path = "../delta-node"}
+delta-lib = { path = "../../lib/delta-lib"}

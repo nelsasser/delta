@@ -92,9 +92,24 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
         }
     };
 
+    // generate code to call both init steps
+    let field_list: Vec<proc_macro2::TokenStream> = ast.fields.iter().map(|x| {
+        match &x.ident {
+            Some(name) => quote!{ #name },
+            None => proc_macro2::TokenStream::new()
+        }
+    }).collect();
+    let default_init = default_initialize(&field_list, &name);
+    
+    let output_init = quote! {
+        impl #name {
+            #default_init
+        }
+    };
+
 
     // add an implementation for the required execution code
-    let output_execute = quote! { 
+    let output_deltanode = quote! { 
         impl DeltaNode<i32> for #name {
             fn __execute(mut self) -> i32 {
                 self.__pre_execute();
@@ -102,12 +117,18 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
                 self.__post_execute();
                 res
             }
+
+            fn __initialize() -> Box<#name> {
+                let mut ret: Box<#name> = <#name>::__default_initialize();
+                ret.__custom_initialize();
+                ret
+            }
         }
     };
     
     let output = quote! {
-        #output_execute
-
+        #output_deltanode
+        #output_init
         #output_set_reset
     };
 
@@ -226,11 +247,17 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
     }
 
     // can either push back into array, or if name can be figured out easily then that seems like a neater way of doing it, without modifying any written code
-    for method in generated_functions.iter() {
-        item_impl.items.push(method.into());
+    // can't seem to easily get the name, but this is straightforward, but it does 'modify' the input code, which I don't like
+    for md in generated_functions.iter() {
+        let q = syn::parse_quote!(#md);
+        item_impl.items.push(q);
     }
 
-    // 
+    let tokens = quote! {
+        #item_impl
+    };
+
+    // preferred way of getting the output
     // let tokens = quote! {
     //     #item_impl
 
@@ -242,7 +269,7 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
     tokens.into()
 }
 
-fn default_initialize(field_list: &Vec<proc_macro2::Ident>, name: &Ident, ) -> proc_macro2::TokenStream {
+fn default_initialize(field_list: &Vec<proc_macro2::TokenStream>, name: &Ident, ) -> proc_macro2::TokenStream {
     // TODO: if using the default initialize the value should be the user specified default value if it exists
     let tokens = quote! {
         pub fn __default_initialize(&mut self) -> Box<#name> {
