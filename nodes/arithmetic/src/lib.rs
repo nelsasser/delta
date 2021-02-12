@@ -9,11 +9,18 @@ pub struct Addi32 {
     //
     // delta-noreset:   - Tells macros not to generate reset code for the field.
     //                  - Can be used to retain state throughout executions and only changes when new data comes in.
-    //
-    // delta-default => {...}:   - Specify the default value of the field when reseting. 
-    //                           - The data inside the `{}` will be taken as gospel, so it must be 100% syntactically correct.
+    //                      
+    // delta-default(...):  - Specify the default value of the field when reseting. 
+    //                      - The data inside the `()` will be taken as gospel, so it must be 100% syntactically correct.
     x: i32,
     y: i32,
+
+    #[delta_ignore] 
+    #[delta_default(10)]
+    /// # comments! (we don't want these yuck!)
+    my_ignored: i32,// indicate to: 1) Do not generate any set or reset functions for the field
+                    //              2) Set the default value upon initialization to 10.
+                    // These attributes effectively makes it so that the engine has no influence on this variable after the node is initialized.
 }
 
 #[delta_node_impl]
@@ -44,22 +51,19 @@ impl Addi32 {
     //     // Box::new(Addi32 { x: 0, y: 0, __num_attributes: 2, __set_attributes: 0}) // what it will be generated
     // }
 
+
+    // the macro will recognize that __pre_execute is already implemented and use it
     fn __pre_execute(&mut self) {
         // do nothing before execution
         println!("Pre Execution!!!");
     }
 
-    // fn __on_execute(&mut self) -> i32 {
-    //     println!("Execution");
-    //     self.x + self.y
-    // }
-
-    // fn __post_execute(&mut self) {
-    //     // reset both values after executing node
-    //     self.x = 0;
-    //     self.y = 0;
-    //     println!("Post Execution");
-    // }
+    // we can also name the functions whatever we want,
+    // then we can signal to the macro to use the custom function as whatever 
+    fn custom_execute(&mut self) -> Impulse<i32> {
+        let result = self.x + self.y;
+        Impulse::SEND(result)
+    }
 }
 
 

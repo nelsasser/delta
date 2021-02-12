@@ -21,7 +21,7 @@ macro_rules! __delta_hashmap_literal {
 // this macro generates the set and reset methods for all of the registered fields.
 // also generates __execute method to implement the DeltaNode trait
 // TODO: may want to move the __execute generation into the impl macro because it is easier to get access to the return type in there...
-#[proc_macro_derive(RegisterDeltaNode)]
+#[proc_macro_derive(RegisterDeltaNode, attributes(delta_ignore, delta_noreset, delta_default))]
 pub fn register_delta_node(input: TokenStream) -> TokenStream {
     let ast: ItemStruct = parse_macro_input!(input as ItemStruct);
 
@@ -37,6 +37,7 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
     let mut set_functions = vec![];
     let mut reset_functions  = vec![];
     let mut reset_calls = vec![];
+
     for field in ast.fields.iter() {
         // TODO: check if any attributes have an ignore flag set
         // TODO: also want to ignore `pub` fields, since we cannot guarantee control with the set and reset functions, enable generation using a flag
@@ -47,6 +48,11 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
 
                 // these fields should not be exposed to anything but internal and generated functions
                 if name.to_string() == "__set_fields" || name.to_string() == "__num_fields" {
+                    continue;
+                }
+
+                // don't generate set or reset functions if the delta-ignore flag is set
+                if has_delta_attribute(field, "delta-ignore") {
                     continue;
                 }
 
@@ -94,11 +100,13 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
 
     // generate code to call both init steps
     let field_list: Vec<proc_macro2::TokenStream> = ast.fields.iter().filter(|x| {
+        // filter out all of the fields that we generated
         if let Some(name) = &x.ident {
             return name.to_string() != "__num_fields" && name.to_string() != "__set_fields"
         }
         false
     }).map(|x| {
+        // then collect the names of each of the fields
         match &x.ident {
             Some(name) => quote!{ #name },
             _ => proc_macro2::TokenStream::new()
@@ -112,7 +120,6 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
             #default_init
         }
     };
-
 
     // add an implementation for the required execution code
     let output_deltanode = quote! { 
@@ -453,6 +460,40 @@ fn generate_wrapper_s(wrap_name: &str, func_name: &str, func_return: Option<&str
     tokens
 }
 
+
+fn is_helper_attribute(attr: &syn::Attribute) -> bool {
+    match attr.style {
+        // make sure it is an outer style
+        syn::AttrStyle::Outer => true,
+        _ => false,
+    }
+}
+
+fn has_delta_attribute(field: &syn::Field, attr_type: &str) -> bool {
+    for attr in &field.attrs {
+        // check if the attribute is an Outer attribute (the first kind listed here https://docs.rs/syn/1.0.4/syn/struct.Attribute.html)
+        if !is_helper_attribute(attr) {
+            continue
+        }
+
+        // jump through a bunch of hoops to get the path (attribute type: "delta-ignore", etc) in the attribute
+        // only return true if we match on the correct type, if anything else if off then skip it
+        let r_meta= attr.parse_meta();
+
+        match r_meta {
+            Ok(meta) => {
+                let opt_path_ident = meta.path().get_ident();
+
+                match opt_path_ident {
+                    Some(ident) => if ident.to_string() == attr_type { return true; } else { continue; },
+                    _ => continue
+                }
+            },
+            Err(_) => continue,
+        }
+    }
+    false
+}
 
 // I think the way to go about this is as follows:
 // in the struct macro add the needed attributes, also check for attributes with a [#delta_ignore] macro
