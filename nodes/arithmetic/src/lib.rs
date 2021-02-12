@@ -1,5 +1,5 @@
 use delta_lib_macro::{delta_node_struct, delta_node_impl, RegisterDeltaNode};
-use delta_lib::DeltaNode;
+use delta_lib::{DeltaNode, Impulse};
 #[delta_node_struct]
 #[derive(RegisterDeltaNode)]
 pub struct Addi32 {
@@ -62,9 +62,11 @@ impl Addi32 {
     // }
 }
 
+
 #[cfg(test)]
 mod tests {
     use crate::DeltaNode;
+    use crate::Impulse;
     use crate::Addi32;
 
     #[test]
@@ -72,6 +74,6 @@ mod tests {
         let mut adder: Box<Addi32> = Addi32::__initialize();
         adder.__set_x(100);
         adder.__set_y(100);
-        assert_eq!(200, adder.__execute());
+        assert_eq!(Impulse::SEND(200), adder.__execute());
     }
 }

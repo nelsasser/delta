@@ -2,7 +2,7 @@ extern crate proc_macro;
 use std::str::FromStr;
 use std::collections::HashMap;
 use proc_macro::TokenStream;
-use quote::{format_ident, quote, quote_spanned};
+use quote::{format_ident, quote};
 use syn::{Ident, ImplItem, ItemImpl, ItemStruct};
 use syn:: {parse::Nothing, parse::Parser, parse_macro_input};
 
@@ -116,10 +116,10 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
 
     // add an implementation for the required execution code
     let output_deltanode = quote! { 
-        impl DeltaNode<Option<i32>> for #name {
-            fn __execute(mut self) -> Option<i32> {
+        impl DeltaNode<Impulse<i32>, #name> for #name {
+            fn __execute(mut self) -> Impulse<i32> {
                 self.__pre_execute();
-                let res: Option<i32> = self.__on_execute();
+                let res: Impulse<i32> = self.__on_execute();
                 self.__post_execute();
                 res
             }
@@ -171,8 +171,6 @@ pub fn delta_node_struct(_args: TokenStream, input: TokenStream) -> TokenStream 
 // if a method does exist it also checks / modifies it to make it correct (e.g. adding __num_fields and __set_fields fields to __initialize)
 #[proc_macro_attribute]
 pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
-    println!("Entering");
-
     let mut item_impl = parse_macro_input!(input as ItemImpl);
     let _ = parse_macro_input!(_args as Nothing);
 
@@ -189,7 +187,6 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
         }
     }
 
-    println!("Got all methods");
     // Next, need to go through the found methods and generate code accordingly
 
     // store all of the generated function here
@@ -242,8 +239,6 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
         }
     }
 
-    println!("Found existing methods");
-
     // now we need to get default functions for all of the non-existent required functions
     for (method, flag) in &method_flags {
         if !flag {
@@ -257,23 +252,18 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
         }
     }
 
-    println!("Generated functions");
-
     // can either push back into array, or if name can be figured out easily then that seems like a neater way of doing it, without modifying any written code
     // can't seem to easily get the name, but this is straightforward, but it does 'modify' the input code, which I don't like
     for md in generated_functions.iter() {
-        println!("{:#?}", md.clone().to_string());
         let q = syn::parse_quote!(#md);
         item_impl.items.push(q);
     }
-
-    println!("Packed 'em all together");
 
     let tokens = quote! {
         #item_impl
     };
 
-    // preferred way of getting the output
+    // preferred way of getting the output, maybe someday :)
     // let tokens = quote! {
     //     #item_impl
 
@@ -282,7 +272,6 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
     //     }
     // };
     
-    println!("Done");
     tokens.into()
 }
 
@@ -290,7 +279,7 @@ fn default_initialize(field_list: &Vec<proc_macro2::TokenStream>, name: &Ident, 
     // TODO: if using the default initialize the value should be the user specified default value if it exists
     if let Ok(num_fields) = proc_macro2::TokenStream::from_str(&field_list.len().to_string()) {
         let tokens = quote! {
-            pub fn __default_initialize(&mut self) -> Box<#name> {
+            pub fn __default_initialize() -> Box<#name> {
                 Box::new( #name { #(#field_list: Default::default(), )* __num_fields: #num_fields, __set_fields: 0})
             }
         };
@@ -323,7 +312,7 @@ fn default_on_execute() -> proc_macro2::TokenStream {
     // tokens
 
     // basically the above, but is static and generated using a function. All of the above comments still apply though
-    generate_wrapper_s("__on_execute", "None", Some("Option<i32>"), true, false, false)
+    generate_wrapper_s("__on_execute", "Impulse::<i32>::NOOP", Some("Impulse<i32>"), true, true, false)
 }
 
 fn default_post_execute() -> proc_macro2::TokenStream {
