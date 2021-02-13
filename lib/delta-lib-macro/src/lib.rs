@@ -2,9 +2,9 @@ extern crate proc_macro;
 use std::str::FromStr;
 use std::collections::HashMap;
 use proc_macro::TokenStream;
-use quote::{format_ident, quote};
+use quote::{format_ident, quote, quote_spanned, spanned::Spanned};
 use syn::{Ident, ImplItem, ItemImpl, ItemStruct};
-use syn:: {parse::Nothing, parse::Parser, parse_macro_input};
+use syn::{parse::Nothing, parse::Parser, parse_macro_input};
 
 #[macro_use]
 macro_rules! __delta_hashmap_literal {
@@ -39,7 +39,6 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
     let mut reset_calls = vec![];
 
     for field in ast.fields.iter() {
-        // TODO: check if any attributes have an ignore flag set
         // TODO: also want to ignore `pub` fields, since we cannot guarantee control with the set and reset functions, enable generation using a flag
         // TODO: every generated field should have a reset function, but if `noreset` flag is set then it will only be excluded from main reset function
 
@@ -51,9 +50,9 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
                     continue;
                 }
 
-                // don't generate set or reset functions if the delta-ignore flag is set
-                if has_attribute(field, "delta_ignore") {
-                    continue;
+                match delta_ignore(field) {
+                    Ok(ignore) => if ignore { continue; } else { () },
+                    Err(ts) => return ts.into(),
                 }
 
                 let ty: &syn::Type = &field.ty;
@@ -78,7 +77,7 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
 
                 // if this flag is set we want to have generated reset and set functions,
                 // but we don't want to automatically call them in the overall reset function
-                if has_attribute(field, "delta_noreset") {
+                if let Ok(_) = has_attribute(field, "delta_noreset") {
                     continue;
                 }
 
@@ -466,8 +465,7 @@ fn generate_wrapper_s(wrap_name: &str, func_name: &str, func_return: Option<&str
     tokens
 }
 
-
-fn is_helper_attribute(attr: &syn::Attribute) -> bool {
+fn is_outer_attribute(attr: &syn::Attribute) -> bool {
     match attr.style {
         // make sure it is an outer style
         syn::AttrStyle::Outer => true,
@@ -475,20 +473,85 @@ fn is_helper_attribute(attr: &syn::Attribute) -> bool {
     }
 }
 
-fn has_attribute(field: &syn::Field, attr_type: &str) -> bool {
+fn has_attribute<'a>(field: &'a syn::Field, attr_type: &str) -> Result<&'a syn::Attribute, bool> {
     for attr in &field.attrs {
         // check if the attribute is an Outer attribute (the first kind listed here https://docs.rs/syn/1.0.4/syn/struct.Attribute.html)
-        if !is_helper_attribute(attr) {
+        if !is_outer_attribute(attr) {
             continue
         }
 
         if attr.path.is_ident(attr_type) {
-            return true;
+            return Ok(&attr);
         }
     }
-    false
+    Err(false)
 }
 
+fn is_public(field: &syn::Field) -> bool {
+    match field.vis {
+        syn::Visibility::Public(_) => true,
+        _ => false,
+    }
+}
+
+// there has to be a better way to do this then to use nested results, but idk how...
+fn get_arg_literal(attr: &syn::Attribute, raise_error: bool, error_msg: &str) -> Result<syn::Lit, Result<proc_macro2::TokenStream, bool>>{
+    if let Ok(meta) = attr.parse_meta() {
+        match meta {
+            syn::Meta::List(meta_list) => {
+                if meta_list.nested.len() == 0 || meta_list.nested.len() > 1 {
+                    return Err(Err(false));
+                }
+
+                return match &meta_list.nested[0] {
+                    syn::NestedMeta::Meta(m) => { 
+                        // TODO: if the raise_error flag is set then that means there must be a literal here or nothing else.
+                        // if a meta is found then it will raise a compiler error to inform the user
+                        // it will print out the specified error message
+                        if raise_error {
+                            let err = quote_spanned! {m.__span() => compile_error!(error_msg); };
+                            Err(Ok(err))
+                        } else {
+                            Err(Err(false)) 
+                        }
+                    } ,
+                    syn::NestedMeta::Lit(lit) => Ok(lit.clone()),
+                }
+
+            },
+            _ => return Err(Err(false)), 
+        }
+    }
+    Err(Err(false)) // hmm yes, it appears as though your error has produced an error... intriguing
+}
+
+fn delta_ignore(field: &syn::Field) -> Result<bool, proc_macro2::TokenStream> {
+    // don't generate set or reset functions if the delta-ignore flag is set
+    if let Ok(attr) = has_attribute(field, "delta_ignore") {
+        // if we found an argument we will handle it. If no argument is found then assume default behavior
+        match get_arg_literal(attr, true, "Argument for `delta_ignore` must be a bool.") {
+            // we expect this argument to be a bool type
+            Ok(arg) => {
+                return match arg {
+                    // if it is true then we ignore, if it is false then generate
+                    // this will override the default behavior if a field is public
+                    syn::Lit::Bool(b) => Ok(b.value),
+                    // If it is any other kind of literal then we ignore it
+                    _ =>  { 
+                        let err = quote_spanned! {arg.span() => compile_error!("Argument for `delta_ignore` must be a bool."); };
+                        return Err(err);
+                    }
+                }
+            }, 
+            Err(r) => {
+                if let Ok(ts) = r { return Err(ts); } // Indicates there was a Meta instead of an expected literal
+                return Ok(true); // If no arguments specified then the default is true
+            }
+        }
+    }
+
+    Ok(is_public(field)) // If there is no delta ignore attribute then we check if it is public value since they are ignored by default
+}
 // I think the way to go about this is as follows:
 // in the struct macro add the needed attributes, also check for attributes with a [#delta_ignore] macro
 // then for each attribute create a  set_[] function, that sets the variable and updates the __set_fields thing
