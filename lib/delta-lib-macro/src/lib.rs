@@ -52,7 +52,7 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
                 }
 
                 // don't generate set or reset functions if the delta-ignore flag is set
-                if has_delta_attribute(field, "delta-ignore") {
+                if has_attribute(field, "delta_ignore") {
                     continue;
                 }
 
@@ -75,6 +75,12 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
                         self.__set_fields -= 1;
                     } 
                 });
+
+                // if this flag is set we want to have generated reset and set functions,
+                // but we don't want to automatically call them in the overall reset function
+                if has_attribute(field, "delta_noreset") {
+                    continue;
+                }
 
                 // generate the calls to each reset functions to be used in main reset function
                 reset_calls.insert(reset_calls.len(), quote! {
@@ -469,27 +475,15 @@ fn is_helper_attribute(attr: &syn::Attribute) -> bool {
     }
 }
 
-fn has_delta_attribute(field: &syn::Field, attr_type: &str) -> bool {
+fn has_attribute(field: &syn::Field, attr_type: &str) -> bool {
     for attr in &field.attrs {
         // check if the attribute is an Outer attribute (the first kind listed here https://docs.rs/syn/1.0.4/syn/struct.Attribute.html)
         if !is_helper_attribute(attr) {
             continue
         }
 
-        // jump through a bunch of hoops to get the path (attribute type: "delta-ignore", etc) in the attribute
-        // only return true if we match on the correct type, if anything else if off then skip it
-        let r_meta= attr.parse_meta();
-
-        match r_meta {
-            Ok(meta) => {
-                let opt_path_ident = meta.path().get_ident();
-
-                match opt_path_ident {
-                    Some(ident) => if ident.to_string() == attr_type { return true; } else { continue; },
-                    _ => continue
-                }
-            },
-            Err(_) => continue,
+        if attr.path.is_ident(attr_type) {
+            return true;
         }
     }
     false

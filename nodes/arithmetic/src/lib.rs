@@ -21,6 +21,9 @@ pub struct Addi32 {
     my_ignored: i32,// indicate to: 1) Do not generate any set or reset functions for the field
                     //              2) Set the default value upon initialization to 10.
                     // These attributes effectively makes it so that the engine has no influence on this variable after the node is initialized.
+
+    #[delta_noreset]
+    custom_reset: String, // indicate that we want to generate set and reset functions, but that we don't want the reset function to be called automatically
 }
 
 #[delta_node_impl]
