@@ -1,10 +1,7 @@
 extern crate proc_macro;
 use std::str::FromStr;
-use std::collections::HashMap;
-use proc_macro::TokenStream;
-use quote::{format_ident, quote, quote_spanned, spanned::Spanned};
-use syn::{Ident, ImplItem, ItemImpl, ItemStruct};
-use syn::{parse::Nothing, parse::Parser, parse_macro_input};
+use quote::{ToTokens, spanned::Spanned};
+use syn::{parse::Parser};
 
 #[macro_use]
 macro_rules! __delta_hashmap_literal {
@@ -22,10 +19,10 @@ macro_rules! __delta_hashmap_literal {
 // also generates __execute method to implement the DeltaNode trait
 // TODO: may want to move the __execute generation into the impl macro because it is easier to get access to the return type in there...
 #[proc_macro_derive(RegisterDeltaNode, attributes(delta_ignore, delta_noreset, delta_default))]
-pub fn register_delta_node(input: TokenStream) -> TokenStream {
-    let ast: ItemStruct = parse_macro_input!(input as ItemStruct);
+pub fn register_delta_node(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let ast = syn::parse_macro_input!(input as syn::ItemStruct);
 
-    let name: Ident = ast.ident;
+    let name = ast.ident;
 
     // TODO:    - Figure out how to automatically deal with type. So that whatever the items on_execute returns is the type for the DeltaNode
     //          - If nothing is returned by the on_execute method then a None: Option should be returned
@@ -39,9 +36,6 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
     let mut reset_calls = vec![];
 
     for field in ast.fields.iter() {
-        // TODO: also want to ignore `pub` fields, since we cannot guarantee control with the set and reset functions, enable generation using a flag
-        // TODO: every generated field should have a reset function, but if `noreset` flag is set then it will only be excluded from main reset function
-
         match &field.ident {
             Some(name) => {
 
@@ -50,17 +44,18 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
                     continue;
                 }
 
+                // check if we should ignore generating set and reset functions for this field
                 match delta_ignore(field) {
                     Ok(ignore) => if ignore { continue; } else { () },
-                    Err(ts) => return ts.into(),
+                    Err(ts) => return ts.into(), // user added incorrect arguments to the macro
                 }
 
                 let ty: &syn::Type = &field.ty;
-                let sfunc_name: proc_macro2::Ident = format_ident!("__set_{}", name);
-                let rfunc_name: proc_macro2::Ident = format_ident!("__reset_{}", name);
+                let sfunc_name: proc_macro2::Ident = quote::format_ident!("__set_{}", name);
+                let rfunc_name: proc_macro2::Ident = quote::format_ident!("__reset_{}", name);
 
                 // generate set functions
-                set_functions.insert(set_functions.len(), quote! {
+                set_functions.insert(set_functions.len(), quote::quote! {
                     pub fn #sfunc_name(&mut self, #name: #ty) {
                         self.#name = #name;
                         self.__set_fields += 1;
@@ -68,7 +63,7 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
                 });
                 
                 // generate reset functions
-                reset_functions.insert(reset_functions.len(), quote! {
+                reset_functions.insert(reset_functions.len(), quote::quote! {
                     pub fn #rfunc_name(&mut self) {
                         self.#name = Default::default(); // TODO: allow user to change default value here...
                         self.__set_fields -= 1;
@@ -82,7 +77,7 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
                 }
 
                 // generate the calls to each reset functions to be used in main reset function
-                reset_calls.insert(reset_calls.len(), quote! {
+                reset_calls.insert(reset_calls.len(), quote::quote! {
                     self.#rfunc_name();
                 });
                 
@@ -92,7 +87,7 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
     }
 
     // combine all of the reset and set functions
-    let output_set_reset = quote!{
+    let output_set_reset = quote::quote!{
         impl #name {
             #(#set_functions)*
             #(#reset_functions)*
@@ -113,21 +108,21 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
     }).map(|x| {
         // then collect the names of each of the fields
         match &x.ident {
-            Some(name) => quote!{ #name },
+            Some(name) => quote::quote!{ #name },
             _ => proc_macro2::TokenStream::new()
         }
     }).collect();
 
     let default_init = default_initialize(&field_list, &name);
     
-    let output_init = quote! {
+    let output_init = quote::quote! {
         impl #name {
             #default_init
         }
     };
 
     // add an implementation for the required execution code
-    let output_deltanode = quote! { 
+    let output_deltanode = quote::quote! { 
         impl DeltaNode<Impulse<i32>, #name> for #name {
             fn __execute(mut self) -> Impulse<i32> {
                 self.__pre_execute();
@@ -144,7 +139,7 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
         }
     };
     
-    let output = quote! {
+    let output = quote::quote! {
         #output_deltanode
         #output_init
         #output_set_reset
@@ -155,24 +150,24 @@ pub fn register_delta_node(input: TokenStream) -> TokenStream {
 
 // this macro generates the extra two fields __num_fields and __set_fields that are required under the hood
 #[proc_macro_attribute]
-pub fn delta_node_struct(_args: TokenStream, input: TokenStream) -> TokenStream {
-    let mut item_struct = parse_macro_input!(input as ItemStruct);
-    let _ = parse_macro_input!(_args as Nothing);
+pub fn delta_node_struct(_args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let mut item_struct = syn::parse_macro_input!(input as syn::ItemStruct);
+    let _ = syn::parse_macro_input!(_args as syn::parse::Nothing);
 
     if let syn::Fields::Named(ref mut fields) = item_struct.fields {
         fields.named.push(
             syn::Field::parse_named
-                .parse2(quote! { __num_fields: i32 })
+                .parse2(quote::quote! { __num_fields: i32 })
                 .unwrap(),
         );
         fields.named.push(
             syn::Field::parse_named
-                .parse2(quote! { __set_fields: i32 })
+                .parse2(quote::quote! { __set_fields: i32 })
                 .unwrap(),
         );
     }
 
-    return quote! {
+    return quote::quote! {
         #item_struct
     }
     .into();
@@ -182,9 +177,13 @@ pub fn delta_node_struct(_args: TokenStream, input: TokenStream) -> TokenStream 
 // it checks to make sure that the required methods exists, and generates default ones if they don't
 // if a method does exist it also checks / modifies it to make it correct (e.g. adding __num_fields and __set_fields fields to __initialize)
 #[proc_macro_attribute]
-pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
-    let mut item_impl = parse_macro_input!(input as ItemImpl);
-    let _ = parse_macro_input!(_args as Nothing);
+pub fn delta_node_impl(args: proc_macro::TokenStream, input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let mut item_impl = syn::parse_macro_input!(input as syn::ItemImpl);
+    let args = syn::parse_macro_input!(args as syn::AttributeArgs);
+
+    // user specifies which of their functions map to the Delta API
+    // also checks for invalid args, DOES NOT check if the args are actually correct (if the names are right)
+    let mut function_mappings = generate_mappings(args);
 
     // need to get the name of the implementation (the `for ...` I guess). Needed to properly generate 
     
@@ -192,7 +191,7 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
     let mut methods = vec![];
     for item in item_impl.items.iter() {
         match item {
-            ImplItem::Method(method) => {
+            syn::ImplItem::Method(method) => {
                 methods.insert(methods.len(), method.clone());
             },
             _ => continue,
@@ -205,20 +204,22 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
     let mut generated_functions = vec![];
 
     // create some helper tables so we only generate methods as needed
-    let mut method_flags: HashMap<String, bool> = __delta_hashmap_literal![ "__custom_initialize".to_owned() => false,
+    let mut method_flags = __delta_hashmap_literal![ "__custom_initialize".to_owned() => false,
                                                                             "__pre_execute".to_owned() => false,
                                                                             "__on_execute".to_owned() => false,
                                                                             "__post_execute".to_owned() => false];
 
-    let attr_name_to_wrap_name: HashMap<String, &str> = __delta_hashmap_literal![   "deltaf-init".to_owned() => "__custom_initialize",
-                                                                                    "deltaf-pre".to_owned() => "__pre_execute",
-                                                                                    "deltaf-on".to_owned() => "__on_execute",
-                                                                                    "deltaf-post".to_owned() => "__post_execute"];
+    let attr_name_to_wrap_name= __delta_hashmap_literal![   "init".to_owned() => "__custom_initialize",
+                                                                                    "pre_exec".to_owned() => "__pre_execute",
+                                                                                    "on_exec".to_owned() => "__on_execute",
+                                                                                    "post_exec".to_owned() => "__post_execute"];
 
     // go through each of the methods and check if the DeltaNode method requirements are satisfied
     // also generate any needed wrapper function if found attribute
     for method in methods.iter() {
+
         let method_name = method.sig.ident.to_string();
+        let method_return = get_return(method);
 
         // update flag if we found a method with a correct name
         // if name is found then continue to next method because we don't care about any wrapper attributes
@@ -271,7 +272,7 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
         item_impl.items.push(q);
     }
 
-    let tokens = quote! {
+    let tokens = quote::quote! {
         #item_impl
     };
 
@@ -287,10 +288,10 @@ pub fn delta_node_impl(_args: TokenStream, input: TokenStream) -> TokenStream {
     tokens.into()
 }
 
-fn default_initialize(field_list: &Vec<proc_macro2::TokenStream>, name: &Ident, ) -> proc_macro2::TokenStream {
+fn default_initialize(field_list: &Vec<proc_macro2::TokenStream>, name: &syn::Ident, ) -> proc_macro2::TokenStream {
     // TODO: if using the default initialize the value should be the user specified default value if it exists
     if let Ok(num_fields) = proc_macro2::TokenStream::from_str(&field_list.len().to_string()) {
-        let tokens = quote! {
+        let tokens = quote::quote! {
             pub fn __default_initialize() -> Box<#name> {
                 Box::new( #name { #(#field_list: Default::default(), )* __num_fields: #num_fields, __set_fields: 0})
             }
@@ -372,12 +373,12 @@ fn generate_wrapper(wrap_name: proc_macro2::TokenStream, func_name: proc_macro2:
 
     // build the wrapping function
     let tokens = match func_return {
-        Some(ret) => quote! {
+        Some(ret) => quote::quote! {
             #ts_pub fn #wrap_name(#ts_self_arg) #ret {
                 #ts_self_call #func_name #ts_call
             }
         },
-        None => quote! {
+        None => quote::quote! {
             #ts_pub fn #wrap_name(#ts_self_arg) {
                 #ts_self_call #func_name #ts_call;
             }
@@ -447,15 +448,15 @@ fn generate_wrapper_s(wrap_name: &str, func_name: &str, func_return: Option<&str
     // build the wrapping function
     let tokens = match func_return {
         Some(ret) => if let Ok(rt) = proc_macro2::TokenStream::from_str(ret) {
-            quote! {
+            quote::quote! {
                 #ts_pub fn #ts_wrap_name(#ts_self_arg) -> #rt {
                     #ts_self_call #ts_func_name #ts_call
                 }
             }    
         } else {
-            quote! { compile_error!("Invalid return type when generating wrapper") }
+            quote::quote! { compile_error!("Invalid return type when generating wrapper") }
         },
-        None => quote! {
+        None => quote::quote! {
             #ts_pub fn #ts_wrap_name(#ts_self_arg) {
                 #ts_self_call #ts_func_name #ts_call;
             }
@@ -509,7 +510,7 @@ fn get_arg_literal(attr: &syn::Attribute, raise_error: bool, error_msg: &str) ->
                         // if a meta is found then it will raise a compiler error to inform the user
                         // it will print out the specified error message
                         if raise_error {
-                            let err = quote_spanned! {m.__span() => compile_error!(error_msg); };
+                            let err = quote::quote_spanned! {m.__span() => compile_error!(error_msg); };
                             Err(Ok(err))
                         } else {
                             Err(Err(false)) 
@@ -538,7 +539,7 @@ fn delta_ignore(field: &syn::Field) -> Result<bool, proc_macro2::TokenStream> {
                     syn::Lit::Bool(b) => Ok(b.value),
                     // If it is any other kind of literal then we ignore it
                     _ =>  { 
-                        let err = quote_spanned! {arg.span() => compile_error!("Argument for `delta_ignore` must be a bool."); };
+                        let err = quote::quote_spanned! {arg.span() => compile_error!("Argument for `delta_ignore` must be a bool."); };
                         return Err(err);
                     }
                 }
@@ -552,6 +553,55 @@ fn delta_ignore(field: &syn::Field) -> Result<bool, proc_macro2::TokenStream> {
 
     Ok(is_public(field)) // If there is no delta ignore attribute then we check if it is public value since they are ignored by default
 }
+
+fn get_return(method: &syn::ImplItemMethod) -> String {
+    return method.sig.output.clone().into_token_stream().to_string();
+}
+
+// TODO: check if the API names are actually correct? 
+fn generate_mappings(args: Vec<syn::NestedMeta>) -> Result<std::collections::HashMap<String, String>, proc_macro2::TokenStream> {
+    let mut map = ::std::collections::HashMap::<String, String>::new();
+
+    for nested_meta in args.iter() {
+        match nested_meta {
+            syn::NestedMeta::Lit(lit) => {
+                let err = quote::quote_spanned! {lit.span() => compile_error!("Arguments for Delta API function mappings must be named values, not literals.")};
+                return Err(err)
+            },
+            syn::NestedMeta::Meta(meta) => {
+                if let syn::Meta::NameValue(map_pair) = meta {
+                    let api_name: String;
+                    let cus_name: String;
+
+                    // grab the key value pairs and let user know if they messed up
+
+                    // check to make sure the identifier is specified correctly
+                    match map_pair.path.get_ident() {
+                        Some(ident) => api_name = ident.to_string(),
+                        _ => return Err(quote::quote_spanned! {map_pair.__span() => compile_error!("Invalid identifier.")}),
+                    }
+
+                    // check to make sure the literal after is specified correctly
+                    match &map_pair.lit {
+                        syn::Lit::Str(name) => cus_name = name.value(),
+                        _ => return Err(quote::quote_spanned! {map_pair.__span() => compile_error!("Literal must be a String.")}),
+                    }
+
+                    // check to make sure that we aren't duplicating anything
+                    if map.contains_key(&api_name) {
+                        return Err(quote::quote_spanned! {map_pair.__span() => compile_error!("Can not have duplicate API wrappers.")});
+                    }
+
+                    // if all check pass then add it to the map
+                    map.insert(api_name, cus_name);
+                }
+            },
+        }
+    }
+
+    Ok(map)
+}
+
 // I think the way to go about this is as follows:
 // in the struct macro add the needed attributes, also check for attributes with a [#delta_ignore] macro
 // then for each attribute create a  set_[] function, that sets the variable and updates the __set_fields thing

@@ -40,7 +40,8 @@ pub struct Addi32 {
     pub my_controlled_public: i64, // this will generate set and reset functions but will not be included in the overall reset
 }
 
-#[delta_node_impl]
+// TODO: allow user to choose to append or prepend their custom post_execute to before or after the default reset if they don't want to fully override it
+#[delta_node_impl(on_exec = "custom_execute", post_exec = "custom_postexecute")]
 impl Addi32 {
     // these will be generated (by the struct macro )
 
