@@ -64,7 +64,7 @@ pub fn register_delta_node(input: proc_macro::TokenStream) -> proc_macro::TokenS
                 let rfunc_name: proc_macro2::Ident = quote::format_ident!("__reset_{}", name);
 
                 // generate set functions
-                set_functions.insert(set_functions.len(), quote::quote! {
+                set_functions.push(quote::quote! {
                     pub fn #sfunc_name(&mut self, #name: #ty) {
                         self.#name = #name;
                         self.__set_fields += 1;
@@ -72,7 +72,7 @@ pub fn register_delta_node(input: proc_macro::TokenStream) -> proc_macro::TokenS
                 });
                 
                 // generate reset functions
-                reset_functions.insert(reset_functions.len(), quote::quote! {
+                reset_functions.push(quote::quote! {
                     pub fn #rfunc_name(&mut self) {
                         self.#name = Default::default(); // TODO: allow user to change default value here...
                         self.__set_fields -= 1;
@@ -86,7 +86,7 @@ pub fn register_delta_node(input: proc_macro::TokenStream) -> proc_macro::TokenS
                 }
 
                 // generate the calls to each reset functions to be used in main reset function
-                reset_calls.insert(reset_calls.len(), quote::quote! {
+                reset_calls.push(quote::quote! {
                     self.#rfunc_name();
                 });
                 
@@ -193,8 +193,12 @@ pub fn delta_node_impl(args: proc_macro::TokenStream, input: proc_macro::TokenSt
 
     // user specifies which of their functions map to the Delta API
     // also checks for invalid args, DOES NOT check if the args are actually correct (if the names are right)
-    let function_mappings: ::std::collections::HashMap<String, String>;
-    match generate_mappings(args) {
+    let function_mappings: ::std::collections::HashMap<&String, String>;
+    let apis = __delta_hashmap_literal![    "init".to_owned() => "__custom_initialize".to_owned(),
+                                                                "pre_exec".to_owned() => "__pre_execute".to_owned(),
+                                                                "on_exec".to_owned() => "__on_execute".to_owned(),
+                                                                "post_exec".to_owned() => "__post_execute".to_owned()];
+    match generate_mappings(args, &apis) {
         Ok(x) => function_mappings = x,
         Err(err) => return err.into(),
     }
@@ -209,7 +213,7 @@ pub fn delta_node_impl(args: proc_macro::TokenStream, input: proc_macro::TokenSt
     for item in item_impl.items.iter() {
         match item {
             syn::ImplItem::Method(method) => {
-                methods.insert(methods.len(), method.clone());
+                methods.push(method.clone());
             },
             _ => continue,
         }
@@ -221,15 +225,11 @@ pub fn delta_node_impl(args: proc_macro::TokenStream, input: proc_macro::TokenSt
     let mut generated_functions = vec![];
 
     // create some helper tables so we only generate methods as needed
+    let mut __v = ::std::vec::Vec::<String>::new();
     let mut method_flags = __delta_hashmap_literal![ "__custom_initialize".to_owned() => false,
-                                                                            "__pre_execute".to_owned() => false,
-                                                                            "__on_execute".to_owned() => false,
-                                                                            "__post_execute".to_owned() => false];
-
-    let attr_name_to_wrap_name= __delta_hashmap_literal![   "init".to_owned() => "__custom_initialize",
-                                                                                    "pre_exec".to_owned() => "__pre_execute",
-                                                                                    "on_exec".to_owned() => "__on_execute",
-                                                                                    "post_exec".to_owned() => "__post_execute"];
+                                                                        "__pre_execute".to_owned() => false,
+                                                                        "__on_execute".to_owned() => false,
+                                                                        "__post_execute".to_owned() => false];
 
     // go through each of the methods and check if the DeltaNode method requirements are satisfied
     // also generate any needed wrapper function if found attribute
@@ -244,35 +244,38 @@ pub fn delta_node_impl(args: proc_macro::TokenStream, input: proc_macro::TokenSt
             *m_flag = true;
             continue;
         }
-        
-        // go through all of the attributes for each method and check if any specify wrappers to generate
-        for attr in method.attrs.iter() {
-            let attr_name = attr.tokens.to_string();
-            let wrap_name = attr_name_to_wrap_name.get(&attr_name);
-        
-            match wrap_name {
-                Some(wrapper) => {
-                    // create a wrapper function
-                    generated_functions.insert(generated_functions.len(), 
-                        generate_wrapper_s(wrapper, &method_name, None, true, true, true)
-                    );
-                    
-                    // update the flag 
-                    if let Some(m_flag) = method_flags.get_mut(*wrapper) {
-                        *m_flag = true;
-                        // purposfully choosing not to stop iterating over all of the other attributes because a user may want to reuse a method
-                        // break; 
+
+        // now generate wrappers
+        for (method, flag) in &mut method_flags {
+            if !*flag {
+                if let Some(fname) = function_mappings.get(method) {
+                    if *fname == method_name {
+                        let new_ret;
+                        // if the user is already returning an impulse then we don't care!
+                        if returns_impulse(&method_return) {
+                            new_ret = (method_return.clone(), "{}".to_owned())
+                        } else { // otherwise wrap an impulse around their return value
+                            new_ret = match &*method_return {
+                                "()" => ("::delta_lib::Impulse<i32>".to_owned(), format!("self.{}();\n::delta_lib::Impulse::NOOP", method_name).to_owned()),
+                                _ => (format!("::delta_lib::Impulse<{}>", method_return).to_owned(), format!("::delta_lib::Impulse::SEND(self.{}())", method_name).to_owned()),
+                            }
+                        }
+                        let w = generate_wrapper_s(method, &*new_ret.1, Some(&*new_ret.0), true, true, false);
+                        generated_functions.push(w);
+                        *flag = true;
                     }
-                },
-                _ => continue,
+                }
             }
         }
+        // for ip in __v.iter() {
+        //     method_flags.insert(ip.to_string(), true);
+        // }
     }
 
     // now we need to get default functions for all of the non-existent required functions
     for (method, flag) in &method_flags {
         if !flag {
-            generated_functions.insert(generated_functions.len(), match method.as_ref() {
+            generated_functions.push(match method.as_ref() {
                 "__custom_initialize" => default_custom_initialize(),
                 "__pre_execute" => default_pre_execute(),
                 "__on_execute" => default_on_execute(),
@@ -562,13 +565,20 @@ fn delta_ignore(field: &syn::Field) -> Result<bool, proc_macro2::TokenStream> {
 }
 
 fn get_return(method: &syn::ImplItemMethod) -> String {
-    method.sig.output.clone().into_token_stream().to_string()
+    let o = match &method.sig.output {
+        syn::ReturnType::Default => "()".to_owned(),
+        syn::ReturnType::Type(_, out) => out.clone().into_token_stream().to_string(),
+    };
+    o.trim_start_matches("->").trim().to_owned()
 }
 
-// TODO: check if the API names are actually correct? 
-fn generate_mappings(args: Vec<syn::NestedMeta>) -> Result<std::collections::HashMap<String, String>, proc_macro2::TokenStream> {
-    let valid_apis = __delta_hashset_literal!["init", "pre_exec", "on_exec", "post_exec"];
-    let mut map = ::std::collections::HashMap::<String, String>::new();
+fn returns_impulse(ret: &String) -> bool {
+    let v: Vec<&str> = ret.split('<').collect();
+    v[0] == "Impulse" || v[0] == "delta_lib::Impulse" || v[0] == "::delta_lib::Impulse"
+}
+
+fn generate_mappings<'a>(args: Vec<syn::NestedMeta>, apis: &'a std::collections::HashMap<String, String>) -> Result<std::collections::HashMap<&'a String, String>, proc_macro2::TokenStream> {
+    let mut map = ::std::collections::HashMap::<&String, String>::new();
 
     for nested_meta in args.iter() {
         match nested_meta {
@@ -578,8 +588,8 @@ fn generate_mappings(args: Vec<syn::NestedMeta>) -> Result<std::collections::Has
             },
             syn::NestedMeta::Meta(meta) => {
                 if let syn::Meta::NameValue(map_pair) = meta {
-                    let api_name: String;
-                    let cus_name: String;
+                    let api_name: String; // name of the delta function
+                    let cus_name: String; // name of the custom function
 
                     // grab the key value pairs and let user know if they messed up
 
@@ -595,19 +605,21 @@ fn generate_mappings(args: Vec<syn::NestedMeta>) -> Result<std::collections::Has
                         _ => return Err(quote::quote_spanned! {map_pair.__span() => compile_error!("Literal must be a String.")}),
                     }
 
-                    // check to make sure that we aren't duplicating anything
-                    if map.contains_key(&api_name) {
-                        return Err(quote::quote_spanned! {map_pair.__span() => compile_error!("Can not have duplicate API wrappers.")});
-                    }
-
                     // next check to make sure that it is a vaid api token
-                    if !valid_apis.contains(&*api_name) {
+                    if !apis.contains_key(&*api_name) {
                         // TODO: figure out how to format 
                         return Err(quote::quote_spanned! {map_pair.__span() => compile_error!("Invalid Delta API, must be one of: {`init`, `pre_exec`, `on_exec`, `post_exec`}", 0)});
                     }
 
+                    // after this point we are guaranteed that the api_name is valid, so we can unwrap as we please
+
+                    // check to make sure that we aren't duplicating anything
+                    if map.contains_key(apis.get(&*api_name).unwrap()) {
+                        return Err(quote::quote_spanned! {map_pair.__span() => compile_error!("Can not have duplicate API wrappers.")});
+                    }
+
                     // if all check pass then add it to the map
-                    map.insert(api_name, cus_name);
+                    map.insert(apis.get(&*api_name).unwrap(), cus_name);
                 }
             },
         }
