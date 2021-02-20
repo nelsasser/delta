@@ -41,7 +41,7 @@ pub struct Addi32 {
 }
 
 // TODO: allow user to choose to append or prepend their custom post_execute to before or after the default reset if they don't want to fully override it
-#[delta_node_impl(on_exec = "custom_execute", post_exec = "custom_postexecute")]
+#[delta_node_impl(on_exec = "custom_execute", post_exec = "custom_postexecute", one_off)]
 impl Addi32 {
     // these will be generated (by the struct macro )
 
