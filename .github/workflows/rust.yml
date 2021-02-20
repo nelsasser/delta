@@ -20,11 +20,13 @@ jobs:
       run: cd ./lib && cargo build --verbose
     - name: Test-Lib
       run: cd ./lib && cargo test --verbose
+      
+    - name: Build-Nodes
+      run: cd ./nodes && cargo build --verbose
+    - name: Test-Nodes
+      run: cd ./nodes && cargo test --verbose
+      
     - name: Build-Core
       run: cd ./core && cargo build --verbose
     - name: Test-Core
       run: cd ./core && cargo test --verbose
-    - name: Build-Nodes
-      run: cd ./nodes && cargo build --verbose
-    - name: Test-Noes
-      run: cd ./nodes && cargo test --verbose
