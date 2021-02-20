@@ -78,7 +78,7 @@ impl Addi32 {
 
     // we can also name the functions whatever we want,
     // then we can signal to the macro to use the custom function as whatever 
-    fn custom_execute(&mut self) -> i32 {
+    fn custom_execute(&mut self) -> i32 { // also works if it is Impulse<i32>, then it doesn't wrap the return type
         let result = self.x + self.y;
         self.my_ignored += 1;
         result

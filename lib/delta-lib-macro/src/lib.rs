@@ -253,7 +253,7 @@ pub fn delta_node_impl(args: proc_macro::TokenStream, input: proc_macro::TokenSt
                         let new_ret;
                         // if the user is already returning an impulse then we don't care!
                         if returns_impulse(&method_return) {
-                            new_ret = (method_return.clone(), "{}".to_owned())
+                            new_ret = (method_return.clone(), format!("self.{}()", method_name).to_owned())
                         } else { // otherwise wrap an impulse around their return value
                             new_ret = match &*method_return {
                                 "()" => ("::delta_lib::Impulse<i32>".to_owned(), format!("self.{}();\n::delta_lib::Impulse::NOOP", method_name).to_owned()),
@@ -573,7 +573,7 @@ fn get_return(method: &syn::ImplItemMethod) -> String {
 }
 
 fn returns_impulse(ret: &String) -> bool {
-    let v: Vec<&str> = ret.split('<').collect();
+    let v: Vec<&str> = ret.split('<').map(|x| x.trim()).collect();
     v[0] == "Impulse" || v[0] == "delta_lib::Impulse" || v[0] == "::delta_lib::Impulse"
 }
 
